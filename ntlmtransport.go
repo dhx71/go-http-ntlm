@@ -3,6 +3,7 @@ package httpntlm
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -21,8 +22,15 @@ type NtlmTransport struct {
 	Password        string
 }
 
-// RoundTrip method send http request and tries to perform NTLM authentication
 func (t NtlmTransport) RoundTrip(req *http.Request) (res *http.Response, err error) {
+	return t.RoundTripTry(1, req)
+}
+
+// RoundTrip method send http request and tries to perform NTLM authentication
+func (t NtlmTransport) RoundTripTry(try int, req *http.Request) (res *http.Response, err error) {
+	if try > 2 {
+		return nil, fmt.Errorf("Too many tries")
+	}
 	// first send NTLM Negotiate header
 	r, _ := http.NewRequest("GET", req.URL.String(), strings.NewReader(""))
 	r.Header.Add("Authorization", "NTLM "+encBase64(negotiate()))
@@ -62,6 +70,12 @@ func (t NtlmTransport) RoundTrip(req *http.Request) (res *http.Response, err err
 		ntlmChallengeHeader := resp.Header.Get("WWW-Authenticate")
 		if ntlmChallengeHeader == "" {
 			return nil, errors.New("Wrong WWW-Authenticate header")
+		}
+		if ntlmChallengeHeader == "Negotiate" || ntlmChallengeHeader == "NTLM" {
+			// no challenge yet
+			req.URL = resp.Request.URL
+			try++
+			return t.RoundTripTry(try, req)
 		}
 
 		ntlmChallengeString := strings.Replace(ntlmChallengeHeader, "NTLM ", "", -1)
